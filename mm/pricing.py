@@ -5,9 +5,15 @@ Vectorised over strikes so the market maker can reprice a whole book each step.
 from __future__ import annotations
 
 import numpy as np
-from scipy.stats import norm
+from scipy.special import ndtr  # fast normal CDF (no scipy.stats per-call overhead)
 
 SQRT_EPS = 1e-12
+_INV_SQRT_2PI = 1.0 / np.sqrt(2.0 * np.pi)
+
+
+def _norm_pdf(x):
+    """Standard normal PDF. Inlined; identical to scipy.stats.norm.pdf but faster."""
+    return _INV_SQRT_2PI * np.exp(-0.5 * x * x)
 
 
 def _d1_d2(S, K, T, r, sigma):
@@ -24,8 +30,8 @@ def price(S, K, T, r, sigma, kind="call"):
     d1, d2 = _d1_d2(S, K, T, r, sigma)
     disc = np.exp(-r * np.maximum(T, 0.0))
     if kind == "call":
-        return S * norm.cdf(d1) - K * disc * norm.cdf(d2)
-    return K * disc * norm.cdf(-d2) - S * norm.cdf(-d1)
+        return S * ndtr(d1) - K * disc * ndtr(d2)
+    return K * disc * ndtr(-d2) - S * ndtr(-d1)
 
 
 def greeks(S, K, T, r, sigma, kind="call"):
@@ -37,18 +43,18 @@ def greeks(S, K, T, r, sigma, kind="call"):
     T = np.maximum(T, SQRT_EPS)
     d1, d2 = _d1_d2(S, K, T, r, sigma)
     sqrt_T = np.sqrt(T)
-    pdf_d1 = norm.pdf(d1)
+    pdf_d1 = _norm_pdf(d1)
     disc = np.exp(-r * T)
 
     gamma = pdf_d1 / (S * sigma * sqrt_T)
     vega = S * pdf_d1 * sqrt_T
 
     if kind == "call":
-        delta = norm.cdf(d1)
-        theta = -(S * pdf_d1 * sigma) / (2 * sqrt_T) - r * K * disc * norm.cdf(d2)
+        delta = ndtr(d1)
+        theta = -(S * pdf_d1 * sigma) / (2 * sqrt_T) - r * K * disc * ndtr(d2)
     else:
-        delta = norm.cdf(d1) - 1.0
-        theta = -(S * pdf_d1 * sigma) / (2 * sqrt_T) + r * K * disc * norm.cdf(-d2)
+        delta = ndtr(d1) - 1.0
+        theta = -(S * pdf_d1 * sigma) / (2 * sqrt_T) + r * K * disc * ndtr(-d2)
 
     return {"delta": delta, "gamma": gamma, "vega": vega, "theta": theta}
 

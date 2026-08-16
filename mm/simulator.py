@@ -116,6 +116,10 @@ def run(cfg: Config) -> Result:
 
     S_prev = S_path[0]
     T_prev = cfg.T0
+    # Greeks/prices at (S,T) depend only on S, K, T, sigma (not on inventory), so
+    # each step we compute them once and reuse; we also carry this step's greeks
+    # forward to serve as next step's `g_prev`. Numerically identical to recomputing.
+    g_prev = greeks(S_prev, K, T_prev, cfg.r, cfg.sigma_quote)
     book_prev = price(S_prev, K, T_prev, cfg.r, cfg.sigma_quote)
     port_prev = float(inventory @ book_prev) + hedge_shares * S_prev + cash
 
@@ -123,7 +127,9 @@ def run(cfg: Config) -> Result:
         S = S_path[t]
         T = max(cfg.T0 - t * dt, 1e-9)
 
-        g_prev = greeks(S_prev, K, T_prev, cfg.r, cfg.sigma_quote)
+        g_cur = greeks(S, K, T, cfg.r, cfg.sigma_quote)
+        book = price(S, K, T, cfg.r, cfg.sigma_quote)
+
         pos_delta_prev = float(inventory @ g_prev["delta"]) + hedge_shares
         pos_gamma_prev = float(inventory @ g_prev["gamma"])
         pos_theta_prev = float(inventory @ g_prev["theta"])
@@ -136,8 +142,8 @@ def run(cfg: Config) -> Result:
         # the maker skews quotes to shed inventory, which biases which side fills.
         hits = rng.random(n_opts) < p_fill
         if hits.any():
-            mid = price(S, K, T, cfg.r, cfg.sigma_quote)
-            vega = greeks(S, K, T, cfg.r, cfg.sigma_quote)["vega"]
+            mid = book
+            vega = g_cur["vega"]
             edge_per_unit = vega * cfg.half_spread_vol   # spread in price terms
 
             # inventory skew: long book -> more likely to get lifted (we sell)
@@ -175,8 +181,7 @@ def run(cfg: Config) -> Result:
 
         # ---- delta hedge ---------------------------------------------------
         if t % cfg.hedge_every == 0:
-            g_now = greeks(S, K, T, cfg.r, cfg.sigma_quote)
-            target = -float(inventory @ g_now["delta"])
+            target = -float(inventory @ g_cur["delta"])
             trade_shares = target - hedge_shares
             if trade_shares != 0.0:
                 cost = abs(trade_shares) * S * cfg.hedge_cost_bps * 1e-4
@@ -185,7 +190,6 @@ def run(cfg: Config) -> Result:
                 hedge_shares = target
 
         # ---- mark to market -------------------------------------------------
-        book = price(S, K, T, cfg.r, cfg.sigma_quote)
         port = float(inventory @ book) + hedge_shares * S + cash
         pnl_step = port - port_prev
 
@@ -199,19 +203,19 @@ def run(cfg: Config) -> Result:
         attrib["gamma"] += gamma_c
         attrib["hedge_error"] += pnl_step - explained - step_edge
 
-        g_end = greeks(S, K, T, cfg.r, cfg.sigma_quote)
         rows.append(
             {
                 "t": t,
                 "S": S,
                 "pnl": port,
                 "inventory_abs": float(np.abs(inventory).sum()),
-                "net_delta": float(inventory @ g_end["delta"]) + hedge_shares,
+                "net_delta": float(inventory @ g_cur["delta"]) + hedge_shares,
                 "hedge_shares": hedge_shares,
             }
         )
 
         S_prev, T_prev, port_prev = S, T, port
+        g_prev = g_cur
 
     attrib["edge_captured"] = edge_captured
     attrib["hedge_costs"] = -hedge_costs

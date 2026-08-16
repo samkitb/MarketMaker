@@ -2,7 +2,7 @@
 
 Run with:  streamlit run app.py
 """
-from dataclasses import replace
+from dataclasses import astuple, replace
 
 import numpy as np
 import pandas as pd
@@ -12,6 +12,27 @@ from mm.simulator import Config, run
 from mm.experiments import run_seeds, sweep
 
 st.set_page_config(page_title="Options Market Maker", layout="wide")
+
+
+# Cache results by config so repeated states are instant and unrelated
+# interactions (e.g. clicking a button) don't recompute the whole simulation.
+# Config is hashed by its field values via astuple.
+_HASH = {Config: astuple}
+
+
+@st.cache_data(show_spinner=False, hash_funcs=_HASH)
+def cached_run(cfg):
+    return run(cfg)
+
+
+@st.cache_data(show_spinner=False, hash_funcs=_HASH)
+def cached_run_seeds(cfg, n_seeds):
+    return run_seeds(cfg, n_seeds)
+
+
+@st.cache_data(show_spinner=False, hash_funcs=_HASH)
+def cached_sweep(cfg, param, values, n_seeds):
+    return sweep(cfg, param, list(values), n_seeds)
 
 st.title("Options market-maker simulator")
 st.caption(
@@ -54,7 +75,7 @@ cfg = Config(
     n_steps=int(n_steps),
 )
 
-res = run(cfg)
+res = cached_run(cfg)
 
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Session P&L", f"{res.total_pnl:,.1f}")
@@ -96,7 +117,7 @@ st.caption(
 )
 if st.button("Run seed study"):
     with st.spinner(f"Running {n_seeds} seeds..."):
-        stats = run_seeds(cfg, n_seeds=n_seeds)
+        stats = cached_run_seeds(cfg, n_seeds)
     a, b, c, d = st.columns(4)
     a.metric("Mean P&L", f"{stats['mean_pnl']:,.1f}")
     b.metric("Std P&L", f"{stats['std_pnl']:,.1f}")
@@ -110,7 +131,7 @@ if st.button("Run seed study"):
 st.subheader("Hedge frequency tradeoff")
 if st.button("Run hedge sweep"):
     with st.spinner("Sweeping hedge frequency..."):
-        df = sweep(cfg, "hedge_every", [1, 5, 10, 25, 50, 100], n_seeds=n_seeds)
+        df = cached_sweep(cfg, "hedge_every", (1, 5, 10, 25, 50, 100), n_seeds)
     st.dataframe(
         df[["hedge_every", "mean_pnl", "std_pnl", "ratio", "loss_rate", "mean_hedge_cost"]]
         .round(2),

@@ -1,0 +1,13 @@
+[server]
+headless = true
+# No source-file watching in production — saves memory and CPU.
+fileWatcherType = "none"
+enableCORS = false
+enableXsrfProtection = false
+
+[browser]
+# Don't phone home with usage stats (avoids extra network calls on the server).
+gatherUsageStats = false
+
+[runner]
+fastReruns = true
